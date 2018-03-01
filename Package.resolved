@@ -1,0 +1,70 @@
+{
+  "object": {
+    "pins": [
+      {
+        "package": "BigInt",
+        "repositoryURL": "https://github.com/lorentey/BigInt.git",
+        "state": {
+          "branch": null,
+          "revision": "557d7e0e15f8693436212594a726af1795488550",
+          "version": "3.0.2"
+        }
+      },
+      {
+        "package": "CLibEvent",
+        "repositoryURL": "/Users/clanat/dev/CLibEvent",
+        "state": {
+          "branch": "master",
+          "revision": "479903303b0ec35d3a08f75b96d96974a7fee727",
+          "version": null
+        }
+      },
+      {
+        "package": "CommonCrypto",
+        "repositoryURL": "https://github.com/IBM-Swift/CommonCrypto.git",
+        "state": {
+          "branch": null,
+          "revision": "9156d238dbc4c15455b77b45e721b2bb0b995e31",
+          "version": "0.1.5"
+        }
+      },
+      {
+        "package": "Cryptor",
+        "repositoryURL": "https://github.com/IBM-Swift/BlueCryptor.git",
+        "state": {
+          "branch": null,
+          "revision": "de20ec9af166d779a08c16f05146f4b9124478d0",
+          "version": "0.8.27"
+        }
+      },
+      {
+        "package": "SRP",
+        "repositoryURL": "https://github.com/Bouke/SRP.git",
+        "state": {
+          "branch": null,
+          "revision": "b166838d4cf9218933c03151d62e50772460f95e",
+          "version": "3.0.1"
+        }
+      },
+      {
+        "package": "SipHash",
+        "repositoryURL": "https://github.com/attaswift/SipHash",
+        "state": {
+          "branch": null,
+          "revision": "7b47e3f23a66770b1eb18e15e20546aad398c9dd",
+          "version": "1.2.0"
+        }
+      },
+      {
+        "package": "SwiftyBeaver",
+        "repositoryURL": "https://github.com/SwiftyBeaver/SwiftyBeaver.git",
+        "state": {
+          "branch": null,
+          "revision": "f24921e83cc356fce6ee12cb6120ab57896de3d6",
+          "version": "1.5.1"
+        }
+      }
+    ]
+  },
+  "version": 1
+}
