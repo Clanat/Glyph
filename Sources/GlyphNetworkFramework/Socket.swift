@@ -14,14 +14,8 @@ public class Socket {
     public typealias TimeoutCallback = () -> Void
     public typealias ErrorCallback = (Error) -> Void
     
-    public enum Event {
-        case data(DataCallback)
-        case timeout(TimeoutCallback)
-        case error(ErrorCallback)
-    }
-    
-    fileprivate static let readTimeout = 10     // sec
-    fileprivate static let writeTimeout = 10    // sec
+    fileprivate static let readTimeout = 30     // sec
+    fileprivate static let writeTimeout = 30    // sec
     
     fileprivate static let readWaterMark = 1...4096
     fileprivate static let writeWaterMark = 1...4096
@@ -29,8 +23,11 @@ public class Socket {
     public let handle: Int32
     public let address: SocketAddress
     
+    public let inputBuffer: ByteBuffer
+    
     fileprivate let bufferEventPtr: OpaquePointer
-    fileprivate let inputBuffer = ByteBuffer(capacity: Socket.readWaterMark.upperBound)
+    
+    fileprivate var outputQueue: Queue<ByteBuffer>
     
     fileprivate var dataCallback: DataCallback?
     fileprivate var timeoutCallback: TimeoutCallback?
@@ -54,6 +51,10 @@ public class Socket {
         guard let eventPtr = bufferevent_socket_new(eventBasePtr, handle, Int32(options.rawValue)) else {
             fatalError("Unable to create buffer event")
         }
+        
+        inputBuffer = ByteBuffer(capacity: Socket.readWaterMark.upperBound)
+        
+        outputQueue = Queue()
         
         bufferEventPtr = eventPtr
         setupBufferEvent()
@@ -92,9 +93,25 @@ public class Socket {
     }
 }
 
-// MARK: - Socket callback bindings
+// MARK: - Sending
 
 extension Socket {
+    public func sendAsync(_ buffer: ByteBuffer) {
+        outputQueue.enqueue(buffer)
+        
+        handleOutput()
+    }
+}
+
+// MARK: - EventEmitter
+
+extension Socket: EventEmitter {
+    public enum Event {
+        case data(DataCallback)
+        case timeout(TimeoutCallback)
+        case error(ErrorCallback)
+    }
+    
     public func on(event: Event) {
         synchronized(lockable: lock) {
             switch event {
@@ -114,22 +131,42 @@ extension Socket {
     fileprivate func handleInput() {
         guard !inputBuffer.isFull else { return }
         
-        guard let bufferEventInput = bufferevent_get_input(bufferEventPtr) else { return }
+        guard let input = bufferevent_get_input(bufferEventPtr) else { return }
         
-        let writableDataSize = min(inputBuffer.writeAreaSize, evbuffer_get_length(bufferEventInput))
+        let writableDataSize = min(inputBuffer.writeAreaSize, evbuffer_get_length(input))
         guard writableDataSize > 0 else { return }
         
         let dataPtr = UnsafeMutablePointer<UInt8>.allocate(capacity: writableDataSize)
-        evbuffer_remove(bufferEventInput, dataPtr, writableDataSize)
-        guard inputBuffer.moveData(from: dataPtr, count: writableDataSize) else {
-            fatalError("Can't move data to buffer")
+        evbuffer_remove(input, dataPtr, writableDataSize)
+        guard inputBuffer.fastWrite(source: dataPtr, size: writableDataSize) else {
+            handleError(.readingFailed)
+            return
         }
         
         synchronized(lockable: lock) { dataCallback?() }
     }
     
     fileprivate func handleOutput() {
+        guard !outputQueue.isEmpty else { return }
         
+        guard let output = bufferevent_get_output(bufferEventPtr) else { return }
+        
+        var outBytesCount = Socket.writeWaterMark.upperBound - evbuffer_get_length(output)
+        
+        while outBytesCount > 0 && !outputQueue.isEmpty {
+            guard let packet = outputQueue.front else { break }
+            let packetSize = packet.readAreaSize
+            let packetOutSize = min(outBytesCount, packetSize)
+            
+            guard var packetOutDataPtr = packet.fastRead(size: packetOutSize) else { break }
+            
+            evbuffer_add(output, &packetOutDataPtr, packetOutSize)
+            outBytesCount -= packetOutSize
+            
+            if packetOutSize == packetSize {
+                outputQueue.dequeue()
+            }
+        }
     }
     
     fileprivate func handleEvent(_ event: Int32) {
@@ -154,6 +191,10 @@ extension Socket {
         
         if event & BEV_EVENT_ERROR > 0 {
             handleError(.unknown)
+        }
+        
+        if event & EV_CLOSED > 0 {
+            print("test")
         }
     }
     

@@ -45,7 +45,7 @@ struct LogonChallengeInfo {
     var os: String = "Win"              // eg 'Win'     char[4]
     var locale: String = "enUS"         // eg 'enUS'    char[4]
     var worldRegionBias: UInt32 = 0     // offset in minutes from UTC time, eg. 180 means 180 minutes
-    var ip: UInt32 = 0                  // client_ip
+    var ip: String = "0.0.0.0"                  // client_ip
     var accountName: String = ""
 
     init() {
@@ -69,7 +69,6 @@ class AuthSession {
         case closed
     }
 
-
     let id: Int32
 
     fileprivate(set) var status: Status = .logonChallenge
@@ -85,14 +84,18 @@ class AuthSession {
         self.socket = socket
         
         id = socket.handle
-
         
+        socket.on(event: .data({ [weak self] in
+            self?.handleSocketData()
+        }))
         
-//        socket.on(event: .error(<#T##Socket.ErrorCallback##Socket.ErrorCallback##(Error) -> Void#>))
-//
-//        socket.on(event: .data(handleSocketData))
-//        socket.on(event: .error(handleSocketError))
-//        socket.on(event: .timeout(handleSocketTimeout))
+        socket.on(event: .error({ [weak self] (error) in
+            self?.handleSocketError(error)
+        }))
+        
+        socket.on(event: .timeout({ [weak self] in
+            self?.handleSocketTimeout()
+        }))
 
         GlyphLog.debug("Started new auth session for remote address: \(socket.address)")
     }
@@ -101,22 +104,12 @@ class AuthSession {
         GlyphLog.debug("Closing auth session for remote address: \(socket.address)")
     }
 
-    func onClose(_ callback: @escaping CloseCallback) {
-        synchronized(lockable: lock) {
-            closeCallback = callback
-        }
-    }
-
-    func onError(_ callback: @escaping ErrorCallback) {
-        synchronized(lockable: lock) {
-            errorCallback = callback
-        }
-    }
-
     // MARK: - Control flow
 
     func close() {
-        // TODO
+        synchronized(lockable: lock) {
+            closeCallback?()
+        }
     }
 }
 
@@ -126,62 +119,56 @@ extension AuthSession {
     // MARK: - Socket callback handlers
 
     fileprivate func handleSocketTimeout() {
-
+        close()
     }
 
     fileprivate func handleSocketError(_ error: Error) {
-
+        close()
     }
 
     fileprivate func handleSocketData() {
-//        let data = socket.inputBuffer
-//
-//        while !data.isEmpty {
-//            guard let rawCommand: AuthCommand.RawValue = data.peek(), let command = AuthCommand(rawValue: rawCommand) else {
-//                close()
-//                return
-//            }
-//
-//            guard handleAuthCommand(command) else {
-//                close()
-//                return
-//            }
-//        }
+        let data = socket.inputBuffer
+
+        while !data.isEmpty {
+            guard let rawCommand: AuthCommand.RawValue = data.peek(), let command = AuthCommand(rawValue: rawCommand) else {
+                close()
+                return
+            }
+
+            guard handleAuthCommand(command) else {
+                close()
+                return
+            }
+        }
     }
-}
-
-// MARK: - Auth command handlers
-
-extension AuthSession {
+    
     fileprivate func handleAuthCommand(_ command: AuthCommand) -> Bool {
         switch command {
         case .logonChallenge: return handleLogonChallenge()
         default: return false
         }
     }
+}
+
+// MARK: - Logon challenge
+
+extension AuthSession {
+    
 
     fileprivate func handleLogonChallenge() -> Bool {
-//        guard status == .logonChallenge else { return false }
-//
-//        let data = socket.inputBuffer
-//        guard let challengeInfo: LogonChallengeInfo = data.read() else {
-//            return false
-//        }
-//
-//        let packet = ByteBuffer(capacity: 1024)
-//        packet.write(AuthCommand.logonChallenge.rawValue)
-//        packet.write(UInt8(0))
-//
-//
-//        socket.sendAsync(packet)
-//
-//        let authResult = getAuthResult(for: challengeInfo)
-//
-//        guard authResult == .success else {
-//            packet.write(authResult.rawValue)
-//            socket.sendAsync(packet)
-//            return true
-//        }
+        guard status == .logonChallenge else { return false }
+
+        let data = socket.inputBuffer
+        guard let challengeInfo: LogonChallengeInfo = data.read() else {
+            return false
+        }
+
+        let authResult = getAuthResult(for: challengeInfo)
+
+        guard authResult == .success else {
+            didFailLogonChallenge(with: authResult)
+            return true
+        }
 
         return true
     }
@@ -195,6 +182,19 @@ extension AuthSession {
 
         return .success
     }
+    
+    fileprivate func didFailLogonChallenge(with authResult: AuthResult) {
+        let data = [
+            AuthCommand.logonChallenge.rawValue,
+            0,
+            authResult.rawValue
+        ]
+        
+        let packet = ByteBuffer(capacity: data.count)
+        packet.write(data)
+        
+        socket.sendAsync(packet)
+    }
 }
 
 // MARK: - Equatable
@@ -202,6 +202,24 @@ extension AuthSession {
 extension AuthSession: Equatable {
     static func ==(lhs: AuthSession, rhs: AuthSession) -> Bool {
         return lhs.id == rhs.id
+    }
+}
+
+// MARK: - EventEmitter
+
+extension AuthSession: EventEmitter {
+    enum Event {
+        case error(ErrorCallback)
+        case close(CloseCallback)
+    }
+    
+    func on(event: Event) {
+        synchronized(lockable: lock) {
+            switch event {
+            case .close(let callback): closeCallback = callback
+            case .error(let callback): errorCallback = callback
+            }
+        }
     }
 }
 

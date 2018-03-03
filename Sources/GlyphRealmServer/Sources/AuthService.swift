@@ -61,9 +61,38 @@ extension AuthService {
 extension AuthService {
     fileprivate func startSession(for socket: Socket) {
         synchronized(lockable: lock) {
-            let unmanagedSession = Unmanaged.passRetained(AuthSession(socket: socket))
-            sessions[socket.handle] = unmanagedSession
+            let session = AuthSession(socket: socket)
+            let sessionId = session.id
+            
+            session.on(event: .close({ [weak self] in
+                self?.handleAuthSessionClose(sessionId: sessionId)
+            }))
+            
+            session.on(event: .error({ [weak self] (error) in
+                self?.handleAuthSessionError(sessionId: sessionId, error: error)
+            }))
+            
+            sessions[sessionId] = Unmanaged.passRetained(session)
         }
+    }
+    
+    fileprivate func closeAuthSession(withId sessionId: Int32) {
+        synchronized(lockable: lock) {
+            guard let unmanagedSession = sessions.removeValue(forKey: sessionId) else { return }
+            unmanagedSession.release()
+        }
+    }
+}
+
+// MARK: - AuthSession event handlers
+
+extension AuthService {
+    fileprivate func handleAuthSessionClose(sessionId: Int32) {
+        closeAuthSession(withId: sessionId)
+    }
+    
+    fileprivate func handleAuthSessionError(sessionId: Int32, error: Error) {
+        closeAuthSession(withId: sessionId)
     }
 }
 

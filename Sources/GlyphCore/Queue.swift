@@ -7,9 +7,9 @@
 
 import Foundation
 
-public struct Queue<T> {
-    fileprivate var array = [T?]()
-    fileprivate var head = 0
+public class Queue<T> {
+    fileprivate var elements = [T?]()
+    fileprivate var headElementIndex = 0
     
     public init() { }
     
@@ -18,24 +18,24 @@ public struct Queue<T> {
     }
     
     public var count: Int {
-        return array.count - head
+        return elements.count - headElementIndex
     }
     
-    public mutating func enqueue(_ element: T) {
-        array.append(element)
+    public func enqueue(_ element: T) {
+        elements.append(element)
     }
     
     @discardableResult
-    public mutating func dequeue() -> T? {
-        guard head < array.count, let element = array[head] else { return nil }
+    public func dequeue() -> T? {
+        guard headElementIndex < elements.count, let element = elements[headElementIndex] else { return nil }
         
-        array[head] = nil
-        head += 1
+        elements[headElementIndex] = nil
+        headElementIndex += 1
         
-        let percentage = Float(head) / Float(array.count)
-        if array.count > 50 && percentage > 0.25 {
-            array.removeFirst(head)
-            head = 0
+        let percentage = Float(headElementIndex) / Float(elements.count)
+        if elements.count > 50 && percentage > 0.25 {
+            elements.removeFirst(headElementIndex)
+            headElementIndex = 0
         }
         
         return element
@@ -43,6 +43,6 @@ public struct Queue<T> {
     
     public var front: T? {
         guard !isEmpty else { return nil }
-        return array[head]
+        return elements[headElementIndex]
     }
 }

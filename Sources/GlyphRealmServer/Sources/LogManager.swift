@@ -10,11 +10,13 @@ import SwiftyBeaver
 
 final class LogManager {
     static let log = SwiftyBeaver.self
+    static let minLogLevel: SwiftyBeaver.Level = .info
     
     private init() { }
     
     static func initialize() {
         let console = ConsoleDestination()
+        console.minLevel = minLogLevel
         console.format = "$DHH:mm:ss$d GlyphRealm: $M"
         log.addDestination(console)
     }

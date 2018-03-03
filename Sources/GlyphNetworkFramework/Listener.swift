@@ -59,7 +59,7 @@ public class Listener {
         }
         
         let context = Unmanaged.passUnretained(self).toOpaque()
-        let flags = LEV_OPT_REUSEABLE | LEV_OPT_CLOSE_ON_FREE | LEV_OPT_CLOSE_ON_EXEC | LEV_OPT_REUSEABLE_PORT
+        let flags = LEV_OPT_REUSEABLE | LEV_OPT_CLOSE_ON_FREE | LEV_OPT_CLOSE_ON_EXEC | LEV_OPT_REUSEABLE_PORT | LEV_OPT_THREADSAFE
         var listenerAddress = unsafeBitCast(rawAddress, to: sockaddr.self)
         let addressSize = MemoryLayout.size(ofValue: rawAddress)
         let listenerPtr = evconnlistener_new_bind(eventBasePtr,

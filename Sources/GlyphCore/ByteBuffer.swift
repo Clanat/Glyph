@@ -22,6 +22,9 @@ public class ByteBuffer {
     public var isEmpty: Bool { return readAreaSize == 0 }
     public var isFull: Bool { return writeAreaSize == 0 }
     
+    public var isBigEndian: Bool {
+        return 32 == 32.bigEndian
+    }
     
     public init(capacity: Int) {
         self.capacity = capacity
@@ -73,14 +76,14 @@ extension ByteBuffer {
         let size = MemoryLayout<T>.size
         guard size <= readAreaSize else { return nil }
         defer { readIndex += size }
-        return UnsafeRawPointer(dataPtr).load(fromByteOffset: readIndex, as: T.self)
+        return (dataPtr + readIndex).withMemoryRebound(to: T.self, capacity: 1) { $0.pointee }
     }
     
     fileprivate func readUnsafe<T>(count: Int) -> [T]? {
         let size = MemoryLayout<T>.size * count
         guard size <= readAreaSize else { return nil }
         defer { readIndex += size }
-        let startPtr = UnsafeRawPointer(dataPtr + readIndex).bindMemory(to: T.self, capacity: count)
+        let startPtr = (dataPtr + readIndex).withMemoryRebound(to: T.self, capacity: count) { $0 }
         return [T](UnsafeBufferPointer(start: startPtr, count: count))
     }
 }
@@ -94,16 +97,13 @@ extension ByteBuffer {
     }
     
     @discardableResult
-    public func write(_ value: Bool) -> Bool {
-        return writeUnsafe(value)
+    public func write<T: Numeric>(_ values: [T]) -> Bool {
+        return writeUnsafe(values)
     }
     
     @discardableResult
-    public func moveData(from dataPtr: UnsafeRawPointer, count: Int) -> Bool {
-        guard count <= writeAreaSize else { return false }
-        guard memmove(self.dataPtr + writeIndex, dataPtr, count) != nil else { return false }
-        writeIndex += count
-        return true
+    public func write(_ value: Bool) -> Bool {
+        return writeUnsafe(value)
     }
     
     @discardableResult
@@ -161,20 +161,23 @@ extension ByteBuffer {
     }
 }
 
-// MARK: - Operators
+// MARK: - Fast I/O
 
 extension ByteBuffer {
-//    @discardableResult
-//    public static func << <T: Numeric> (buffer: ByteBuffer, value: T) -> ByteBuffer {
-//        buffer.write(value)
-//        return buffer
-//    }
-//    
-//    @discardableResult
-//    public static func << (buffer: ByteBuffer, value: Bool) -> ByteBuffer {
-//        buffer.write(value)
-//        return buffer
-//    }
+    @discardableResult
+    public func fastRead(size: Int) -> UnsafeMutablePointer<UInt8>? {
+        guard size <= readAreaSize else { return nil }
+        defer { readIndex += size }
+        return dataPtr + readIndex
+    }
+    
+    @discardableResult
+    public func fastWrite(source: UnsafeRawPointer, size: Int) -> Bool {
+        guard size <= writeAreaSize else { return false }
+        guard memmove(dataPtr + writeIndex, source, size) != nil else { return false }
+        writeIndex += size
+        return true
+    }
 }
 
 
