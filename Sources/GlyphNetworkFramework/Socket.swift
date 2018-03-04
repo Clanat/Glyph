@@ -96,12 +96,9 @@ extension Socket {
     @discardableResult
     public func sendAsync(_ buffer: ByteBuffer) -> Bool {
         guard !buffer.isEmpty else { return false }
-        
-        guard let dataPtr = buffer.fastRead(size: buffer.readAreaSize) else {
-            return false
-        }
-        
-        return bufferevent_write(bufferEventPtr, dataPtr, buffer.readAreaSize) == 0
+        let size = buffer.readAreaSize
+        guard let dataPtr = buffer.fastRead(size: size) else { return false }
+        return bufferevent_write(bufferEventPtr, dataPtr, size) == 0
     }
     
     @discardableResult

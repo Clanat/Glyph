@@ -92,6 +92,15 @@ extension ByteBuffer {
 
 extension ByteBuffer {
     @discardableResult
+    public func write(_ data: Data) -> Bool {
+        guard data.count <= writeAreaSize else { return false }
+        let succeed = data.withUnsafeBytes { memcpy(dataPtr + writeIndex, $0, data.count) } != nil
+        guard succeed else { return false }
+        writeIndex += data.count
+        return true
+    }
+    
+    @discardableResult
     public func write<T: Numeric>(_ value: T) -> Bool {
         return writeUnsafe(value)
     }

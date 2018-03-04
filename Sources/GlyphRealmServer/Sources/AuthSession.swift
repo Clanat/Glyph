@@ -9,6 +9,8 @@ import Foundation
 import GlyphNetworkFramework
 import GlyphCore
 import SRP
+import BigInt
+import Cryptor
 
 // MARK: - AuthCommands
 
@@ -24,6 +26,13 @@ enum AuthCommand: UInt8 {
     case xferAccept             = 0x32
     case xferResume             = 0x33
     case xferCancel             = 0x34
+}
+
+enum AccountSecurityKind: UInt8 {
+    case none           = 1
+    case pin            = 2
+    case matrix         = 3
+    case token          = 4
 }
 
 // MARK: - LogonChallengeInfo
@@ -57,10 +66,17 @@ struct LogonChallengeInfo {
 // MARK: - AuthSession
 
 class AuthSession {
+    fileprivate static let testAccountCredentials: (salt: Data, verificationKey: Data) = {
+        return createSaltedVerificationKey(username: "test",
+                                           password: "test",
+                                           group: srpGroup,
+                                           algorithm: .sha1)
+    }()
+    
     typealias ErrorCallback = (_ error: Error) -> Void
     typealias CloseCallback = () -> Void
 
-    enum Status {
+    enum Phase {
         case logonChallenge
         case logonProof
         case reconnectProof
@@ -70,14 +86,28 @@ class AuthSession {
     }
 
     let id: Int32
+    
+    fileprivate static let srpPrime = BigUInt("894B645E89E1535BBDAD5B8B290650530801B18EBFBF5E8FAB3C82872A3E9BB7", radix: 16)!
+    fileprivate static let srpPrimeString = String(srpPrime, radix: 16)
+    fileprivate static let srpPrimeData = srpPrime.serialize()
+    
+    fileprivate static let srpGenerator = BigUInt(integerLiteral: 7)
+    fileprivate static let srpGeneratorString = String(srpGenerator, radix: 16)
+    fileprivate static let srpGeneratorData = srpGenerator.serialize()
+    
+    fileprivate static let srpGroup = Group(prime: srpPrimeString, generator: srpGeneratorString)!
 
-    fileprivate(set) var status: Status = .logonChallenge
+    fileprivate(set) var phase =  Phase.logonChallenge
+    
     fileprivate let socket: Socket
     fileprivate let lock = NSLock()
 
     fileprivate var closeCallback: CloseCallback?
     fileprivate var errorCallback: ErrorCallback?
-
+    
+    fileprivate var logonChallengeInfo: LogonChallengeInfo!
+    fileprivate var srp: SRP.Server!
+    
     // MARK: - Lifecycle
 
     init(socket: Socket) {
@@ -144,36 +174,41 @@ extension AuthSession {
     
     fileprivate func handleAuthCommand(_ command: AuthCommand) -> Bool {
         switch command {
-        case .logonChallenge: return handleLogonChallenge()
+        case .logonChallenge: return handleLogonChallengeCommand()
+        case .logonProof: return handleLogonProofCommand()
         default: return false
         }
     }
 }
 
-// MARK: - Logon challenge
+// MARK: - Logon challenge phase
 
 extension AuthSession {
-    
+    fileprivate func handleLogonChallengeCommand() -> Bool {
+        guard phase == .logonChallenge else { return false }
 
-    fileprivate func handleLogonChallenge() -> Bool {
-        guard status == .logonChallenge else { return false }
-
-        let data = socket.inputBuffer
-        guard let challengeInfo: LogonChallengeInfo = data.read() else {
+        guard let logonChallengeInfo: LogonChallengeInfo = socket.inputBuffer.read() else {
             return false
         }
+        
+        self.logonChallengeInfo = logonChallengeInfo
 
-        let authResult = getAuthResult(for: challengeInfo)
-
+        let authResult = getAuthResult()
         guard authResult == .success else {
             didFailLogonChallenge(with: authResult)
             return true
         }
 
+        sendLogonChallengeResponse(accountName: logonChallengeInfo.accountName)
+        
         return true
     }
 
-    fileprivate func getAuthResult(for challengeInfo: LogonChallengeInfo) -> AuthResult {
+    fileprivate func getAuthResult() -> AuthResult {
+        guard let challengeInfo = self.logonChallengeInfo else {
+            return .failDisconnected
+        }
+        
         // FIXME: account validation, send error
 
         guard challengeInfo.accountName.lowercased() == "test" else {
@@ -191,6 +226,74 @@ extension AuthSession {
         ]
         
         socket.sendAsync(&data)
+    }
+    
+    fileprivate func sendLogonChallengeResponse(accountName: String) {
+        
+        let testAccountCredentials = AuthSession.testAccountCredentials
+        srp = Server(username: accountName,
+                     salt: testAccountCredentials.salt,
+                     verificationKey: testAccountCredentials.verificationKey,
+                     group: AuthSession.srpGroup,
+                     algorithm: .sha1)
+        
+        let packet = ByteBuffer(capacity: 1024)
+        
+        packet.write(AuthCommand.logonChallenge.rawValue)
+        packet.write(UInt8(0x00))   // unknown
+        packet.write(AuthResult.success.rawValue)
+        
+        // B (SRP public server key)
+        let publicKeyData = srp.publicKey
+        guard publicKeyData.count == 32 else { fatalError("Invalid SRP public key") }
+        packet.write(publicKeyData)
+        
+        // g (SRP generator)
+        let srpGeneratorData = AuthSession.srpGeneratorData
+        guard srpGeneratorData.count == 1 else { fatalError("Invalid SRP generator") }
+        packet.write(UInt8(srpGeneratorData.count))
+        packet.write(srpGeneratorData)
+        
+        // N (SRP prime)
+        let srpPrimeData = AuthSession.srpPrimeData
+        guard srpModulusData.count == 32 else { fatalError("Invalid SRP prime") }
+        packet.write(UInt8(srpPrimeData.count))
+        packet.write(srpPrimeData)
+        
+        // s (SRP user's salt)
+        let srpSaltData = testAccountCredentials.salt
+        packet.write(srpSaltData)
+        packet.write([UInt8](repeating: 0, count: 16))
+        
+        // CRC salt (A salt to be used in AuthLogonProof_Client.crc_hash)
+        let crcSalt = BigUInt.randomInteger(withExactWidth: 16 * 8)
+        let crcSaltData = crcSalt.serialize()
+        guard crcSaltData.count == 16 else { fatalError("Invalid crc salt") }
+        packet.write(crcSaltData)
+        
+        
+        // TODO: 2-factor auth
+        packet.write(AccountSecurityKind.none.rawValue)
+        //        if securityFlag == .pin {
+        //
+        //        } else if securityFlag == .matrix {
+        //
+        //        } else if securityFlag == .token {
+        //
+        //        }
+        
+        socket.sendAsync(packet)
+        phase = .logonProof
+    }
+}
+
+// MARK: - Logon proof phase
+
+extension AuthSession {
+    fileprivate func handleLogonProofCommand() -> Bool {
+        guard status = .logonProof else { return false }
+        
+        return true
     }
 }
 
