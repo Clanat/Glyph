@@ -67,10 +67,7 @@ struct LogonChallengeInfo {
 
 class AuthSession {
     fileprivate static let testAccountCredentials: (salt: Data, verificationKey: Data) = {
-        return createSaltedVerificationKey(username: "test",
-                                           password: "test",
-                                           group: srpGroup,
-                                           algorithm: .sha1)
+        return createSaltedVerificationKey(username: "test", password: "test", group: srpGroup, algorithm: .sha1)
     }()
     
     typealias ErrorCallback = (_ error: Error) -> Void
@@ -256,7 +253,7 @@ extension AuthSession {
         
         // N (SRP prime)
         let srpPrimeData = AuthSession.srpPrimeData
-        guard srpModulusData.count == 32 else { fatalError("Invalid SRP prime") }
+        guard srpPrimeData.count == 32 else { fatalError("Invalid SRP prime") }
         packet.write(UInt8(srpPrimeData.count))
         packet.write(srpPrimeData)
         
@@ -291,7 +288,7 @@ extension AuthSession {
 
 extension AuthSession {
     fileprivate func handleLogonProofCommand() -> Bool {
-        guard status = .logonProof else { return false }
+        guard phase == .logonProof else { return false }
         
         return true
     }
