@@ -56,8 +56,8 @@ extension ByteBuffer {
     }
     
     public func read(size: Int) -> String? {
-        guard var bytes: [UInt8] = read(count: size) else { return nil }
-        return String(cString: &bytes)
+        guard let bytes: [CChar] = read(count: size) else { return nil }
+        return String(cString: bytes).replacingOccurrences(of: "\u{1}", with: "")
     }
     
     public func read<T: Numeric>(count: Int) -> [T]? {

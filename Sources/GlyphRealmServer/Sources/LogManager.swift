@@ -10,7 +10,7 @@ import SwiftyBeaver
 
 final class LogManager {
     static let log = SwiftyBeaver.self
-    static let minLogLevel: SwiftyBeaver.Level = .info
+    static let minLogLevel: SwiftyBeaver.Level = .debug
     
     private init() { }
     

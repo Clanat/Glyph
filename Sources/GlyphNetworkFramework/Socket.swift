@@ -17,8 +17,8 @@ public class Socket {
     fileprivate static let readTimeout = 30     // sec
     fileprivate static let writeTimeout = 30    // sec
     
-    fileprivate static let readWaterMark = 1...4096
-    fileprivate static let writeWaterMark = 1...4096
+    fileprivate static let readWaterMark = 0...4096
+    fileprivate static let writeWaterMark = 0...4096
     
     public let handle: Int32
     public let address: SocketAddress
@@ -26,8 +26,6 @@ public class Socket {
     public let inputBuffer: ByteBuffer
     
     fileprivate let bufferEventPtr: OpaquePointer
-    
-    fileprivate var outputQueue: Queue<ByteBuffer>
     
     fileprivate var dataCallback: DataCallback?
     fileprivate var timeoutCallback: TimeoutCallback?
@@ -54,8 +52,6 @@ public class Socket {
         
         inputBuffer = ByteBuffer(capacity: Socket.readWaterMark.upperBound)
         
-        outputQueue = Queue()
-        
         bufferEventPtr = eventPtr
         setupBufferEvent()
     }
@@ -67,11 +63,11 @@ public class Socket {
             theSelf.handleInput()
         }
         
-        let writeCallback: bufferevent_data_cb = { eventPtr, context in
-            guard let context = context else { fatalError("Invalid context") }
-            let theSelf = Unmanaged<Socket>.fromOpaque(context).takeUnretainedValue()
-            theSelf.handleOutput()
-        }
+//        let writeCallback: bufferevent_data_cb = { eventPtr, context in
+//            guard let context = context else { fatalError("Invalid context") }
+//            let theSelf = Unmanaged<Socket>.fromOpaque(context).takeUnretainedValue()
+//            theSelf.handleOutput()
+//        }
         
         let eventCallback: bufferevent_event_cb = { eventPtr, event, context in
             guard let context = context else { fatalError("Invalid context") }
@@ -80,26 +76,38 @@ public class Socket {
         }
         
         let context = Unmanaged.passUnretained(self).toOpaque()
-        bufferevent_setcb(bufferEventPtr, readCallback, writeCallback, eventCallback, context)
+        bufferevent_setcb(bufferEventPtr, readCallback, nil, eventCallback, context)
         
         var readTimeout = timeval(tv_sec: Socket.readTimeout, tv_usec: 0)
         var writeTimeout = timeval(tv_sec: Socket.writeTimeout, tv_usec: 0)
         bufferevent_set_timeouts(bufferEventPtr, &readTimeout, &writeTimeout)
         
-        bufferevent_setwatermark(bufferEventPtr, Int16(EV_READ), Socket.readWaterMark.lowerBound, Socket.readWaterMark.upperBound)
-        bufferevent_setwatermark(bufferEventPtr, Int16(EV_WRITE), Socket.writeWaterMark.lowerBound, Socket.writeWaterMark.upperBound)
+//        bufferevent_setwatermark(bufferEventPtr, Int16(EV_READ), Socket.readWaterMark.lowerBound, Socket.readWaterMark.upperBound)
+//        bufferevent_setwatermark(bufferEventPtr, Int16(EV_WRITE), Socket.writeWaterMark.lowerBound, Socket.writeWaterMark.upperBound)
         
-        bufferevent_enable(bufferEventPtr, Int16(EV_READ | EV_WRITE | CLibEvent.EV_TIMEOUT))
+        bufferevent_enable(bufferEventPtr, Int16(EV_READ | EV_WRITE | EV_PERSIST))
     }
 }
 
 // MARK: - Sending
 
 extension Socket {
-    public func sendAsync(_ buffer: ByteBuffer) {
-        outputQueue.enqueue(buffer)
+    
+    @discardableResult
+    public func sendAsync(_ buffer: ByteBuffer) -> Bool {
+        guard !buffer.isEmpty else { return false }
         
-        handleOutput()
+        guard let dataPtr = buffer.fastRead(size: buffer.readAreaSize) else {
+            return false
+        }
+        
+        return bufferevent_write(bufferEventPtr, dataPtr, buffer.readAreaSize) == 0
+    }
+    
+    @discardableResult
+    public func sendAsync(_ data: inout [UInt8]) -> Bool {
+        guard !data.isEmpty else { return false }
+        return bufferevent_write(bufferEventPtr, &data, data.count) == 0
     }
 }
 
@@ -137,7 +145,7 @@ extension Socket {
         guard writableDataSize > 0 else { return }
         
         let dataPtr = UnsafeMutablePointer<UInt8>.allocate(capacity: writableDataSize)
-        evbuffer_remove(input, dataPtr, writableDataSize)
+        bufferevent_read(bufferEventPtr, dataPtr, writableDataSize)
         guard inputBuffer.fastWrite(source: dataPtr, size: writableDataSize) else {
             handleError(.readingFailed)
             return
@@ -146,37 +154,7 @@ extension Socket {
         synchronized(lockable: lock) { dataCallback?() }
     }
     
-    fileprivate func handleOutput() {
-        guard !outputQueue.isEmpty else { return }
-        
-        guard let output = bufferevent_get_output(bufferEventPtr) else { return }
-        
-        var outBytesCount = Socket.writeWaterMark.upperBound - evbuffer_get_length(output)
-        
-        while outBytesCount > 0 && !outputQueue.isEmpty {
-            guard let packet = outputQueue.front else { break }
-            let packetSize = packet.readAreaSize
-            let packetOutSize = min(outBytesCount, packetSize)
-            
-            guard var packetOutDataPtr = packet.fastRead(size: packetOutSize) else { break }
-            
-            evbuffer_add(output, &packetOutDataPtr, packetOutSize)
-            outBytesCount -= packetOutSize
-            
-            if packetOutSize == packetSize {
-                outputQueue.dequeue()
-            }
-        }
-    }
-    
     fileprivate func handleEvent(_ event: Int32) {
-        // BEV_EVENT_READING: error encountered while reading
-        // BEV_EVENT_WRITING: error encountered while writing
-        // BEV_EVENT_EOF: eof file reached
-        // BEV_EVENT_ERROR: unrecoverable error encountered
-        // BEV_EVENT_TIMEOUT: user-specified timeout reached
-        // BEV_EVENT_CONNECTED: connect operation finished
-
         if event & BEV_EVENT_TIMEOUT > 0 {
             handleTimeout()
         }
@@ -191,10 +169,6 @@ extension Socket {
         
         if event & BEV_EVENT_ERROR > 0 {
             handleError(.unknown)
-        }
-        
-        if event & EV_CLOSED > 0 {
-            print("test")
         }
     }
     

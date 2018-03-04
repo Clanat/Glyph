@@ -176,24 +176,21 @@ extension AuthSession {
     fileprivate func getAuthResult(for challengeInfo: LogonChallengeInfo) -> AuthResult {
         // FIXME: account validation, send error
 
-        guard challengeInfo.accountName == "test" else {
-            return .failNoAccess
+        guard challengeInfo.accountName.lowercased() == "test" else {
+            return .failUnknownAccount
         }
 
         return .success
     }
     
     fileprivate func didFailLogonChallenge(with authResult: AuthResult) {
-        let data = [
+        var data: [UInt8] = [
             AuthCommand.logonChallenge.rawValue,
-            0,
-            authResult.rawValue
+            0x00,
+            authResult.rawValue,
         ]
         
-        let packet = ByteBuffer(capacity: data.count)
-        packet.write(data)
-        
-        socket.sendAsync(packet)
+        socket.sendAsync(&data)
     }
 }
 

@@ -21,7 +21,7 @@ extension ByteBuffer {
         guard let worldRegionBias: UInt32 = read() else { return nil }
         guard let ip: UInt32 = read() else { return nil }
         guard let accountNameSize: UInt8 = read() else { return nil }
-        guard let accountName: String = read(size: Int(accountNameSize)) else { return nil }
+        guard let accountName: String = read(size: Int(accountNameSize)) else { return   nil }
         
         var info = LogonChallengeInfo()
         info.command = command
