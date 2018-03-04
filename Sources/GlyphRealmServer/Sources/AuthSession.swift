@@ -29,7 +29,7 @@ enum AuthCommand: UInt8 {
 }
 
 enum AccountSecurityKind: UInt8 {
-    case none           = 1
+    case none           = 0
     case pin            = 2
     case matrix         = 3
     case token          = 4
@@ -37,7 +37,7 @@ enum AccountSecurityKind: UInt8 {
 
 // MARK: - LogonChallengeInfo
 
-struct LogonChallengeInfo {
+class ClientLogonChallenge {
     struct ClientVersion {
         var major: UInt8 = 0
         var minor: UInt8 = 0
@@ -61,6 +61,17 @@ struct LogonChallengeInfo {
 
     }
 }
+
+class ClientLogonProof {
+    var command = AuthCommand.logonProof
+    var publicKeyBytes: [UInt8] = []             // A[32]
+    var proofKeyBytes: [UInt8] = []              // M1[20]
+    var crcHash: [UInt8] = []               // crc_hash[20]
+    var numberOfKeys: UInt8 = 0
+    var securityKind = AccountSecurityKind.none
+}
+
+// MARK: - ClientLogonProof
 
 
 // MARK: - AuthSession
@@ -102,8 +113,8 @@ class AuthSession {
     fileprivate var closeCallback: CloseCallback?
     fileprivate var errorCallback: ErrorCallback?
     
-    fileprivate var logonChallengeInfo: LogonChallengeInfo!
-    fileprivate var srp: SRP.Server!
+    fileprivate var logonChallenge: ClientLogonChallenge?
+    fileprivate var srp: SRP.Server?
     
     // MARK: - Lifecycle
 
@@ -184,11 +195,11 @@ extension AuthSession {
     fileprivate func handleLogonChallengeCommand() -> Bool {
         guard phase == .logonChallenge else { return false }
 
-        guard let logonChallengeInfo: LogonChallengeInfo = socket.inputBuffer.read() else {
+        guard let logonChallenge: ClientLogonChallenge = socket.inputBuffer.read() else {
             return false
         }
         
-        self.logonChallengeInfo = logonChallengeInfo
+        self.logonChallenge = logonChallenge
 
         let authResult = getAuthResult()
         guard authResult == .success else {
@@ -196,17 +207,15 @@ extension AuthSession {
             return true
         }
 
-        sendLogonChallengeResponse(accountName: logonChallengeInfo.accountName)
-        
-        return true
+        return sendLogonChallengeResponse(accountName: logonChallenge.accountName)
     }
 
     fileprivate func getAuthResult() -> AuthResult {
-        guard let challengeInfo = self.logonChallengeInfo else {
+        guard let challengeInfo = self.logonChallenge else {
             return .failDisconnected
         }
         
-        // FIXME: account validation, send error
+        // FIXME: account validation, send error (account is banned for example)
 
         guard challengeInfo.accountName.lowercased() == "test" else {
             return .failUnknownAccount
@@ -225,14 +234,17 @@ extension AuthSession {
         socket.sendAsync(&data)
     }
     
-    fileprivate func sendLogonChallengeResponse(accountName: String) {
-        
+    fileprivate func sendLogonChallengeResponse(accountName: String) -> Bool {
         let testAccountCredentials = AuthSession.testAccountCredentials
         srp = Server(username: accountName,
                      salt: testAccountCredentials.salt,
                      verificationKey: testAccountCredentials.verificationKey,
                      group: AuthSession.srpGroup,
                      algorithm: .sha1)
+        
+        srp?.sessionKey
+        
+        guard let srp = self.srp else { return false }
         
         let packet = ByteBuffer(capacity: 1024)
         
@@ -271,16 +283,11 @@ extension AuthSession {
         
         // TODO: 2-factor auth
         packet.write(AccountSecurityKind.none.rawValue)
-        //        if securityFlag == .pin {
-        //
-        //        } else if securityFlag == .matrix {
-        //
-        //        } else if securityFlag == .token {
-        //
-        //        }
         
-        socket.sendAsync(packet)
+        guard socket.sendAsync(packet) else { return false }
+        
         phase = .logonProof
+        return true
     }
 }
 
@@ -289,8 +296,45 @@ extension AuthSession {
 extension AuthSession {
     fileprivate func handleLogonProofCommand() -> Bool {
         guard phase == .logonProof else { return false }
+        guard let srp = self.srp else { return false }
+        guard let clientProof: ClientLogonProof = socket.inputBuffer.read() else { return false }
+        
+        let serverProof: Data
+        do {
+            let publicKey = Data(bytes: clientProof.publicKeyBytes)
+            let keyProof = Data(bytes: clientProof.proofKeyBytes)
+            serverProof = try srp.verifySession(publicKey: publicKey, keyProof: keyProof)
+        } catch {
+            return didFailLogonProofPhase()
+        }
         
         return true
+    }
+    
+    fileprivate func didFailLogonProofPhase() -> Bool {
+        guard let logonChallenge = self.logonChallenge else { return false }
+        
+        var packetData: [UInt8]
+        
+        switch logonChallenge.clientVersion.build {
+        // ...1.12.1
+        case ...6005:
+            packetData = [
+                AuthCommand.logonProof.rawValue,
+                AuthResult.failUnknownAccount.rawValue,
+            ]
+        // 1.12.2...
+        case 6006...:
+            packetData = [
+                AuthCommand.logonProof.rawValue,
+                AuthResult.failUnknownAccount.rawValue,
+                3,      // ?
+                0       // ?
+            ]
+        default: return false
+        }
+        
+        return socket.sendAsync(&packetData)
     }
 }
 
